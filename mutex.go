@@ -19,15 +19,16 @@ type Mutex struct {
 }
 
 func (m *Mutex) TryLock() bool {
+	// 直接获取锁，获取成功直接返回
 	if atomic.CompareAndSwapInt32((*int32)(unsafe.Pointer(&m.Mutex)), 0, mutexLocked) {
 		return true
 	}
-
+	// 判断是否为锁定模式、饥饿模式、唤醒模式
 	old := atomic.LoadInt32((*int32)(unsafe.Pointer(&m.Mutex)))
 	if old&(mutexLocked|mutexStarving|mutexWoken) != 0 {
 		return false
 	}
-
+	// 再次获取锁
 	new := old | mutexLocked
 	return atomic.CompareAndSwapInt32((*int32)(unsafe.Pointer(&m.Mutex)), old, new)
 }
