@@ -1,43 +1,38 @@
-// Copyright 2019 smallnest. All rights reserved.
-// Use of this source code is governed by a MIT-style
-// license that can be found in the LICENSE file.
-
 package ringbuffer
 
 import (
 	"errors"
-	"unsafe"
 )
 
 var (
 	ErrTooManyDataToWrite = errors.New("too many data to write")
 	ErrIsFull             = errors.New("ringbuffer is full")
 	ErrIsEmpty            = errors.New("ringbuffer is empty")
-	ErrAccuqireLock       = errors.New("no lock to accquire")
+	ErrAcquireLock        = errors.New("no lock to accquire")
 )
+
+type ElementType interface{}
 
 // RingBuffer is a circular buffer that implement io.ReaderWriter interface.
 type RingBuffer struct {
-	buf    []byte
-	size   int
-	r      int // next position to read
-	w      int // next position to write
-	isFull bool
-	mu     Mutex
+	buf    []ElementType // 缓冲区
+	size   int           // 缓存大小
+	r      int           // next position to read
+	w      int           // next position to write
+	isFull bool          // 缓冲区是否已满
+	mu     Mutex         // 互斥锁
 }
 
 // New returns a new RingBuffer whose buffer has the given size.
 func New(size int) *RingBuffer {
 	return &RingBuffer{
-		buf:  make([]byte, size),
+		buf:  make([]ElementType, size),
 		size: size,
 	}
 }
 
-// Read reads up to len(p) bytes into p. It returns the number of bytes read (0 <= n <= len(p)) and any error encountered. Even if Read returns n < len(p), it may use all of p as scratch space during the call. If some data is available but not len(p) bytes, Read conventionally returns what is available instead of waiting for more.
-// When Read encounters an error or end-of-file condition after successfully reading n > 0 bytes, it returns the number of bytes read. It may return the (non-nil) error from the same call or return the error (and n == 0) from a subsequent call.
-// Callers should always process the n > 0 bytes returned before considering the error err. Doing so correctly handles I/O errors that happen after reading some bytes and also both of the allowed EOF behaviors.
-func (r *RingBuffer) Read(p []byte) (n int, err error) {
+// Read returns a given buffer
+func (r *RingBuffer) Read(p []ElementType) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -49,15 +44,15 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 }
 
 // TryRead read up to len(p) bytes into p like Read but it is not blocking.
-// If it has not succeeded to accquire the lock, it return 0 as n and ErrAccuqireLock.
-func (r *RingBuffer) TryRead(p []byte) (n int, err error) {
+// If it has not succeeded to accquire the lock, it return 0 as n and ErrAcquireLock.
+func (r *RingBuffer) TryRead(p []ElementType) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 
 	ok := r.mu.TryLock()
 	if !ok {
-		return 0, ErrAccuqireLock
+		return 0, ErrAcquireLock
 	}
 
 	n, err = r.read(p)
@@ -65,7 +60,9 @@ func (r *RingBuffer) TryRead(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (r *RingBuffer) read(p []byte) (n int, err error) {
+// read returns data from buffer
+func (r *RingBuffer) read(p []ElementType) (n int, err error) {
+	// buffer is empty
 	if r.w == r.r && !r.isFull {
 		return 0, ErrIsEmpty
 	}
@@ -100,8 +97,8 @@ func (r *RingBuffer) read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// ReadByte reads and returns the next byte from the input or ErrIsEmpty.
-func (r *RingBuffer) ReadByte() (b byte, err error) {
+// ReadNext reads and returns the next byte from the input or ErrIsEmpty.
+func (r *RingBuffer) ReadNext() (b ElementType, err error) {
 	r.mu.Lock()
 	if r.w == r.r && !r.isFull {
 		r.mu.Unlock()
@@ -122,7 +119,7 @@ func (r *RingBuffer) ReadByte() (b byte, err error) {
 // It returns the number of bytes written from p (0 <= n <= len(p)) and any error encountered that caused the write to stop early.
 // Write returns a non-nil error if it returns n < len(p).
 // Write must not modify the slice data, even temporarily.
-func (r *RingBuffer) Write(p []byte) (n int, err error) {
+func (r *RingBuffer) Write(p []ElementType) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -134,14 +131,14 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 }
 
 // TryWrite writes len(p) bytes from p to the underlying buf like Write, but it is not blocking.
-// If it has not succeeded to accquire the lock, it return 0 as n and ErrAccuqireLock.
-func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
+// If it has not succeeded to accquire the lock, it return 0 as n and ErrAcquireLock.
+func (r *RingBuffer) TryWrite(p []ElementType) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 	ok := r.mu.TryLock()
 	if !ok {
-		return 0, ErrAccuqireLock
+		return 0, ErrAcquireLock
 	}
 
 	n, err = r.write(p)
@@ -150,7 +147,7 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (r *RingBuffer) write(p []byte) (n int, err error) {
+func (r *RingBuffer) write(p []ElementType) (n int, err error) {
 	if r.isFull {
 		return 0, ErrIsFull
 	}
@@ -194,28 +191,28 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// WriteByte writes one byte into buffer, and returns ErrIsFull if buffer is full.
-func (r *RingBuffer) WriteByte(c byte) error {
+// WriteNext writes one byte into buffer, and returns ErrIsFull if buffer is full.
+func (r *RingBuffer) WriteNext(c ElementType) error {
 	r.mu.Lock()
-	err := r.writeByte(c)
+	err := r.writeNext(c)
 	r.mu.Unlock()
 	return err
 }
 
-// TryWriteByte writes one byte into buffer without blocking.
-// If it has not succeeded to accquire the lock, it return ErrAccuqireLock.
-func (r *RingBuffer) TryWriteByte(c byte) error {
+// TryWriteNext 非阻塞写入一个元素，获取锁失败时会报错
+func (r *RingBuffer) TryWriteNext(c ElementType) error {
 	ok := r.mu.TryLock()
 	if !ok {
-		return ErrAccuqireLock
+		return ErrAcquireLock
 	}
 
-	err := r.writeByte(c)
+	err := r.writeNext(c)
 	r.mu.Unlock()
 	return err
 }
 
-func (r *RingBuffer) writeByte(c byte) error {
+// writeNext 写下一个元素
+func (r *RingBuffer) writeNext(c ElementType) error {
 	if r.w == r.r && r.isFull {
 		return ErrIsFull
 	}
@@ -232,7 +229,7 @@ func (r *RingBuffer) writeByte(c byte) error {
 	return nil
 }
 
-// Length return the length of available read bytes.
+// Length 获取可读的缓冲长度
 func (r *RingBuffer) Length() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -251,12 +248,12 @@ func (r *RingBuffer) Length() int {
 	return r.size - r.r + r.w
 }
 
-// Capacity returns the size of the underlying buffer.
+// Capacity 获取当前缓冲区的容量
 func (r *RingBuffer) Capacity() int {
 	return r.size
 }
 
-// Free returns the length of available bytes to write.
+// Free 获取可写缓冲的长度
 func (r *RingBuffer) Free() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -275,22 +272,14 @@ func (r *RingBuffer) Free() int {
 	return r.size - r.w + r.r
 }
 
-// WriteString writes the contents of the string s to buffer, which accepts a slice of bytes.
-func (r *RingBuffer) WriteString(s string) (n int, err error) {
-	x := (*[2]uintptr)(unsafe.Pointer(&s))
-	h := [3]uintptr{x[0], x[1], x[1]}
-	buf := *(*[]byte)(unsafe.Pointer(&h))
-	return r.Write(buf)
-}
-
-// Bytes returns all available read bytes. It does not move the read pointer and only copy the available data.
-func (r *RingBuffer) Bytes() []byte {
+// Elements 获取所有可读缓冲，该函数只用作拷贝缓冲，不会移动指针
+func (r *RingBuffer) Elements() []ElementType {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.w == r.r {
 		if r.isFull {
-			buf := make([]byte, r.size)
+			buf := make([]ElementType, r.size)
 			copy(buf, r.buf[r.r:])
 			copy(buf[r.size-r.r:], r.buf[:r.w])
 			return buf
@@ -299,13 +288,13 @@ func (r *RingBuffer) Bytes() []byte {
 	}
 
 	if r.w > r.r {
-		buf := make([]byte, r.w-r.r)
+		buf := make([]ElementType, r.w-r.r)
 		copy(buf, r.buf[r.r:r.w])
 		return buf
 	}
 
 	n := r.size - r.r + r.w
-	buf := make([]byte, n)
+	buf := make([]ElementType, n)
 
 	if r.r+n < r.size {
 		copy(buf, r.buf[r.r:r.r+n])
@@ -319,7 +308,7 @@ func (r *RingBuffer) Bytes() []byte {
 	return buf
 }
 
-// IsFull returns this ringbuffer is full.
+// IsFull 判断当前缓冲环是否已满
 func (r *RingBuffer) IsFull() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -327,7 +316,7 @@ func (r *RingBuffer) IsFull() bool {
 	return r.isFull
 }
 
-// IsEmpty returns this ringbuffer is empty.
+// IsEmpty 判断当前缓冲环是否为空
 func (r *RingBuffer) IsEmpty() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -335,7 +324,7 @@ func (r *RingBuffer) IsEmpty() bool {
 	return !r.isFull && r.w == r.r
 }
 
-// Reset the read pointer and writer pointer to zero.
+// Reset 将读写指针置为0
 func (r *RingBuffer) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
